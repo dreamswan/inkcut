@@ -12,16 +12,25 @@ Created on Dec 15, 2018
 import sys
 import itertools
 from time import time
-from atom.api import Atom
+from atom.api import Atom, Instance
 from enaml.qt.QtCore import QPointF
 from enaml.qt.QtGui import QVector2D
 from inkcut.core.utils import (
     log, split_painter_path, join_painter_paths, to_unit, find_subclasses
 )
+from inkcut.core.api import Plugin
+from inkcut.core.workbench import InkcutWorkbench
 
 
 class OrderHandler(Atom):
     name = ''
+
+    #: A reference to the JobPlugin
+    plugin = Instance(Plugin)
+
+    def _default_plugin(self):
+        workbench = InkcutWorkbench.instance()
+        return workbench.get_plugin("inkcut.job")
 
     def order_by_func(self, job, path, sort_func):
         subpaths = sorted(split_painter_path(path), key=sort_func)
@@ -104,7 +113,8 @@ class OrderShortestPath(OrderHandler):
         log.debug("Subpath count: {}".format(len(subpaths)))
 
         # Cache all start and end points
-        time_limit = time()+self.time_limit
+        now = time()
+        time_limit = now + self.plugin.optimizer_timeout
         zero = QVector2D(0, 0)
         for sp in subpaths:
             # Average start and end into one "vertex"
@@ -133,12 +143,15 @@ class OrderShortestPath(OrderHandler):
             # time.time() is slow so limit the calls
             if time() > time_limit:
                 result.extend(subpaths)  # At least part of it is optimized
-                log.debug("Shortest path search aborted (time limit reached)")
+                log.warning(
+                    "Shortest path search aborted (time limit reached)")
                 break
+
+        duration = now - time()
         d = self.subpath_move_distance(zero, original)
-        d = d-self.subpath_move_distance(zero, result)
-        log.debug("Shortest path search: Saved {} in of movement ".format(
-            to_unit(d, 'in')))
+        d = d - self.subpath_move_distance(zero, result)
+        log.debug("Shortest path search: Saved {} in of movement in {}".format(
+                to_unit(d, 'in'), duration))
         return join_painter_paths(result)
 
     def subpath_move_distance(self, p, subpaths, limit=sys.maxsize):
@@ -153,7 +166,6 @@ class OrderShortestPath(OrderHandler):
                 break  # Over the limit already abort
             p = sp.end_point
         return d
-
 
 
 #: Register all subclasses
